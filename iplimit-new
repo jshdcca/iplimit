@@ -1,0 +1,130 @@
+#!/bin/bash  
+# Full path to tc binary
+# THE script restricts bandwidth per IP
+
+ 
+TC=$(which tc)
+ 
+#
+# NETWORK CONFIGURATION
+# interface - name of your interface device
+# interface_speed - speed in mbit of your $interface
+# ip - IP address of your server, change this if you don't want to use
+#      the default catch all filters.
+#
+interface=enp3s0
+interface_speed=1000mbit
+ip=192.168.1.1  # The IP address bound to the interface
+ 
+# Define the upload and download speed limit, follow units can be 
+# passed as a parameter:
+# kbps: Kilobytes per second
+# mbps: Megabytes per second
+# kbit: kilobits per second
+# mbit: megabits per second
+# bps: Bytes per second
+download_limit=4mbit
+ceiling=4mbit
+upload_limit=4mbit
+download_limit_ops=4mbit
+ceiling_ops=4mbit
+upload_limit_ops=4mbit 
+download_limit_man=20mbit
+ceiling_man=20mbit
+upload_limit_man=20mbit
+#download_limit=1mbps
+#download_limit=1mbps
+#upload_limit=1mbps  
+#ceiling=1mbps
+ 
+ 
+# Filter options for limiting the intended interface.
+FILTER="$TC filter add dev $interface protocol ip parent 1:0 prio 1 u32"
+ 
+#
+# This function starts the TC rules and limits the upload and download speed
+# per already configured earlier.
+# 
+ 
+function start_tc { 
+    tc qdisc show dev $interface | grep -q "qdisc pfifo_fast 0"  
+    [ "$?" -gt "0" ] && tc qdisc del dev $interface root; sleep 1  
+ 
+    # start the tc configuration
+    $TC qdisc add dev $interface root handle 1: htb default 300
+    $TC class add dev $interface parent 1: classid 1:1 htb rate $interface_speed 
+    $TC class add dev $interface parent 1:1 classid 1:300 htb rate $interface_speed 
+
+for j in {1..7}
+do
+for i in {1..255}
+do
+  k=$(($j*1000+i))
+  IP=192.168.$j.$i
+  if [ "$j" -eq "1" ];
+     then
+     CLASS_COMMAND="$TC class add dev $interface parent 1:1 classid 1:$k htb rate $download_limit_ops ceil $ceiling_ops"
+     FILTER_COMMAND=" $FILTER match ip dst $IP/32 flowid 1:$k"
+     FILTER_COMMAND_UP=" $FILTER match ip src $IP/32 flowid 1:$k"
+  else
+      if [ "$j" -eq "7" -a "$i" -lt "49" ];
+          then
+          CLASS_COMMAND="$TC class add dev $interface parent 1:1 classid 1:$k htb rate $download_limit_man ceil $ceiling_man"
+          FILTER_COMMAND=" $FILTER match ip dst $IP/32 flowid 1:$k"
+          FILTER_COMMAND_UP=" $FILTER match ip src $IP/32 flowid 1:$k"
+      else
+      CLASS_COMMAND="$TC class add dev $interface parent 1:1 classid 1:$k htb rate $download_limit ceil $ceiling"
+      FILTER_COMMAND=" $FILTER match ip dst $IP/32 flowid 1:$k"
+      FILTER_COMMAND_UP=" $FILTER match ip src $IP/32 flowid 1:$k"
+      fi
+  fi
+#  echo $IP
+#  echo $CLASS_COMMAND
+#  echo $FILTER_COMMAND
+#  if [ "$j" -eq "1" ] && [ "$i" -eq "1" ];
+  if [ "$j" -eq "1" ] && [ "$i" -lt "10" ];
+    then
+  echo "SKIPPING $CLASS_COMMAND"
+  echo "SKIPPING $FILTER_COMMAND"
+  else
+    $CLASS_COMMAND
+    $FILTER_COMMAND
+    $FILTER_COMMAND_UP
+  fi
+done
+done 
+ 
+}
+ 
+#
+# Removes the network speed limiting and restores the default TC configuration
+#
+function stop_tc {
+    tc qdisc show dev $interface | grep -q "qdisc pfifo_fast 0"
+    [ "$?" -gt "0" ] && tc qdisc del dev $interface root
+}
+ 
+function show_status {
+        $TC -s qdisc ls dev $interface
+}
+#
+# Display help 
+#
+function display_help {
+        echo "Usage: tc [OPTION]"
+        echo -e "\tstart - Apply the tc limit"
+        echo -e "\tstop - Remove the tc limit"
+        echo -e "\tstatus - Show status"
+}
+ 
+# Start
+if [ -z "$1" ]; then
+        display_help
+elif [ "$1" == "start" ]; then
+        start_tc
+elif [ "$1" == "stop" ]; then
+        stop_tc
+elif [ "$1" == "status" ]; then
+        show_status
+fi
+
